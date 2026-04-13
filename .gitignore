@@ -1,0 +1,44 @@
+# Build artifacts
+contracts/*/target/
+contracts/*/.anchor/
+contracts/*/.anchor-test/
+**/test-ledger/
+
+# Never commit any keypair files
+**/*-keypair.json
+**/node_modules/
+**/dist/
+
+# IMPORTANT: program-id keypair is at contracts/mammoth_core/target/deploy/mammoth_core-keypair.json
+# DO NOT commit it (it's a secret). Back it up offline (e.g. in a password manager).
+# Without it you cannot redeploy at the same program address if the program is closed.
+
+# Compiled SBF/BPF (regenerate via `anchor build`)
+*.so
+
+# Lock files (regenerate per-environment)
+contracts/*/yarn.lock
+contracts/*/package-lock.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test/temp files
+test-*.js
+*.tmp
