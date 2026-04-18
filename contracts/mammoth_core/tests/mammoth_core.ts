@@ -186,7 +186,8 @@ describe("mammoth_core", () => {
       new anchor.BN(0),
       new anchor.BN(0),
       new anchor.BN(5_000),
-      new anchor.BN(0)
+      new anchor.BN(0),
+      null
     ).accounts({
       projectState,
       cycleState,

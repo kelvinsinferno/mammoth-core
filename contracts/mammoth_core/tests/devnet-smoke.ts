@@ -157,7 +157,8 @@ async function main() {
       new anchor.BN(0),
       new anchor.BN(0),
       new anchor.BN(2000),
-      new anchor.BN(0)
+      new anchor.BN(0),
+      null
     )
     .accounts({
       projectState,

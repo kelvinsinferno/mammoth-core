@@ -210,7 +210,8 @@ describe("mammoth_core integration", function () {
           new anchor.BN(0), // step_size (unused for linear)
           new anchor.BN(0), // step_increment (unused)
           new anchor.BN(2_000), // end_price = 2000 lamports
-          new anchor.BN(0) // growth_factor_k (unused)
+          new anchor.BN(0), // growth_factor_k (unused)
+          null // activates_at (immediate launch)
         )
         .accounts({
           projectState: pdas.projectState,
@@ -437,7 +438,8 @@ describe("mammoth_core integration", function () {
             new anchor.BN(0),
             new anchor.BN(0),
             new anchor.BN(2000),
-            new anchor.BN(0)
+            new anchor.BN(0),
+            null
           )
           .accounts({
             projectState: pdas.projectState,
@@ -569,7 +571,8 @@ describe("mammoth_core integration", function () {
           new anchor.BN(0),
           new anchor.BN(0),
           new anchor.BN(2000),
-          new anchor.BN(0)
+          new anchor.BN(0),
+          null
         )
         .accounts({
           projectState: pdas.projectState,
@@ -723,7 +726,8 @@ describe("mammoth_core integration", function () {
             new anchor.BN(0),
             new anchor.BN(0),
             new anchor.BN(2000),
-            new anchor.BN(0)
+            new anchor.BN(0),
+            null
           )
           .accounts({
             projectState: pdas.projectState,
@@ -755,7 +759,8 @@ describe("mammoth_core integration", function () {
             new anchor.BN(0),
             new anchor.BN(0),
             new anchor.BN(2000),
-            new anchor.BN(0)
+            new anchor.BN(0),
+            null
           )
           .accounts({
             projectState: pdas.projectState,

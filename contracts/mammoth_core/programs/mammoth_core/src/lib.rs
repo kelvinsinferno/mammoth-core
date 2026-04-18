@@ -19,6 +19,7 @@ pub struct CycleOpened {
     pub supply_cap: u64,
     pub base_price: u64,         // lamports per token
     pub rights_window_end: i64,  // unix timestamp; 0 if no rights window
+    pub activates_at: Option<i64>, // FIX SCHED-1: Some = scheduled launch at unix ts
     pub timestamp: i64,
 }
 
@@ -207,12 +208,22 @@ pub struct CycleState {
     /// If set, snapshot uses max(rights_allocated, rights_committed) to reserve space for all
     /// potential claimants even if they didn't claim before rights_window_end.
     pub rights_committed: u64,
+    /// FIX SCHED-1: Optional on-chain gate for scheduled cycle launches.
+    /// When Some, all user-facing token-moving instructions (buy_tokens,
+    /// exercise_rights, claim_rights) reject with CycleNotYetActivated until
+    /// `clock.unix_timestamp >= activates_at`. The rights window is shifted
+    /// forward so it opens at activates_at and ends at activates_at + duration,
+    /// letting creators schedule any cycle (1st or Nth) without needing a
+    /// second signature at the scheduled time — activate_cycle is permissionless
+    /// and can be called by anyone (keeper, first visitor) once T passes.
+    pub activates_at: Option<i64>,
     pub bump: u8,
 }
 
 impl CycleState {
-    // discriminator(8) + pubkey(32) + u8 + enum(1) + u64*8(64) + i64(8) + enum(1) + u8 + option<[u8;32]>(33) + u64*3(24) + u8
-    pub const LEN: usize = 8 + 32 + 1 + 1 + 8 + 8 + 8 + 1 + 8 + 8 + 8 + 8 + 8 + 8 + 33 + 8 + 8 + 8 + 1;
+    // discriminator(8) + pubkey(32) + u8 + enum(1) + u64*8(64) + i64(8) + enum(1) + u8
+    // + option<[u8;32]>(33) + u64*3(24) + option<i64>(9) + u8
+    pub const LEN: usize = 8 + 32 + 1 + 1 + 8 + 8 + 8 + 1 + 8 + 8 + 8 + 8 + 8 + 8 + 33 + 8 + 8 + 8 + 9 + 1;
 }
 
 #[account]
@@ -327,6 +338,8 @@ pub enum MammothError {
     RightsWindowStillOpen,
     #[msg("Scheduled launch time has not been reached yet")]
     LaunchTimeNotReached,
+    #[msg("Cycle has not yet activated — scheduled start time not reached")]
+    CycleNotYetActivated,
     #[msg("Merkle root not set for this cycle — call set_rights_merkle_root first")]
     MerkleRootNotSet,
     #[msg("Merkle proof is invalid — proof does not verify against stored root")]
@@ -809,6 +822,7 @@ pub mod mammoth_core {
         step_increment: u64,
         end_price: u64,
         growth_factor_k: u64,
+        activates_at: Option<i64>,
     ) -> Result<()> {
         let project = &mut ctx.accounts.project_state;
         // Authority check: creator OR operator with can_open_cycle permission
@@ -926,6 +940,16 @@ pub mod mammoth_core {
         let clock = Clock::get()?;
         let cycle_index = project.current_cycle;
 
+        // FIX SCHED-1: If activates_at is set, validate and use it as the window origin.
+        // activates_at must be now-or-future (past timestamps make no sense for scheduling).
+        if let Some(act) = activates_at {
+            require!(act >= clock.unix_timestamp, MammothError::LaunchTimeNotReached);
+        }
+        let window_start = activates_at.unwrap_or(clock.unix_timestamp);
+        let rights_window_end = window_start
+            .checked_add(rights_window_duration)
+            .ok_or(MammothError::MathOverflow)?;
+
         let cycle = &mut ctx.accounts.cycle_state;
         cycle.project = project.key();
         cycle.cycle_index = cycle_index;
@@ -934,10 +958,7 @@ pub mod mammoth_core {
         cycle.minted = 0;
         cycle.base_price = base_price;
         cycle.status = CycleStatus::RightsWindow;
-        // FIX F2: Use checked_add to prevent overflow
-        cycle.rights_window_end = clock.unix_timestamp
-            .checked_add(rights_window_duration)
-            .ok_or(MammothError::MathOverflow)?;
+        cycle.rights_window_end = rights_window_end;
         cycle.step_size = step_size;
         cycle.step_increment = step_increment;
         cycle.end_price = end_price;
@@ -947,6 +968,7 @@ pub mod mammoth_core {
         cycle.rights_allocated = 0;     // FIX RA-8: Track cumulative rights
         cycle.rights_reserved_at_activation = 0; // FIX H-R6-2: snapshot at activation
         cycle.rights_committed = 0;               // FIX H-R7-1: committed via merkle
+        cycle.activates_at = activates_at; // FIX SCHED-1
         cycle.bump = ctx.bumps.cycle_state;
 
         project.current_cycle = cycle_index
@@ -967,6 +989,7 @@ pub mod mammoth_core {
             supply_cap: cycle.supply_cap,
             base_price: cycle.base_price,
             rights_window_end: cycle.rights_window_end,
+            activates_at: cycle.activates_at,
             timestamp: clock.unix_timestamp,
         });
         msg!(
@@ -991,6 +1014,10 @@ pub mod mammoth_core {
         let clock = Clock::get()?;
         let cycle = &mut ctx.accounts.cycle_state;
 
+        // FIX SCHED-1: honor scheduled activation on exercise
+        if let Some(act) = cycle.activates_at {
+            require!(clock.unix_timestamp >= act, MammothError::CycleNotYetActivated);
+        }
         require!(cycle.status == CycleStatus::RightsWindow, MammothError::NotRightsWindow);
         require!(clock.unix_timestamp < cycle.rights_window_end, MammothError::RightsWindowExpired);
 
@@ -1122,6 +1149,15 @@ pub mod mammoth_core {
         require!(cycle.project == ctx.accounts.project_state.key(), MammothError::InvalidCycleProject);
         require!(ctx.accounts.mint.key() == ctx.accounts.project_state.mint, MammothError::InvalidProjectMint);
         require!(cycle.status == CycleStatus::Active, MammothError::NotActive);
+
+        // FIX SCHED-1: honor scheduled activation on public buy (belt-and-suspenders
+        // since activate_cycle also waits for rights_window_end >= activates_at)
+        {
+            let clock = Clock::get()?;
+            if let Some(act) = cycle.activates_at {
+                require!(clock.unix_timestamp >= act, MammothError::CycleNotYetActivated);
+            }
+        }
 
         // FIX H-R6-2 (round 7): Use snapshot from activation, not live computation.
         // Previously: public_cap = supply_cap - max(0, rights_allocated - minted) eroded
@@ -1518,6 +1554,10 @@ pub mod mammoth_core {
         let cycle = &mut ctx.accounts.cycle_state;
 
         require!(cycle.project == ctx.accounts.project_state.key(), MammothError::InvalidCycleProject);
+        // FIX SCHED-1: scheduled cycles reject claims before activates_at
+        if let Some(act) = cycle.activates_at {
+            require!(clock.unix_timestamp >= act, MammothError::CycleNotYetActivated);
+        }
         require!(cycle.status == CycleStatus::RightsWindow, MammothError::NotRightsWindow);
         require!(clock.unix_timestamp < cycle.rights_window_end, MammothError::RightsWindowExpired);
 
